@@ -1,0 +1,38 @@
+{
+    "EnableTileGeneration": false,
+    "EnableGameGeneration": true,
+    "Host": "",
+    "Port": 8881,
+    "AlternativeURL": "",
+    "WWWDir": "./www",
+    "FetchRateInSeconds": 15,
+    "DatabaseConnections": [
+        {
+          "Name": "Default",
+          "URL": "localhost",
+          "Port": 6379,
+          "Password": "foobared"
+        },
+        {
+          "Name": "TerritoryDB",
+          "URL": "localhost",
+          "Port": 6379,
+          "Password": "foobared"
+        }
+    ],
+    "GridSize": 1400000.0,
+    "ServersX": 15,
+    "ServersY": 15,
+    "GameSize": 4096,
+    "TileSize": 256,
+    "MaxZoom": 7,
+    "LandRadiusUE": 10000,
+    "WaterRadiusUE": 21000,
+    "CircleAlpha": 128,
+    "AtlasS3URL": "",
+    "AtlasS3Region": "",
+    "AtlasS3AccessID": "",
+    "AtlasS3SecretKey": "",
+    "AtlasS3BucketName": "",
+    "AtlasS3KeyPrefix": ""
+}
