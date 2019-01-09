@@ -284,12 +284,16 @@ type MapOptions struct {
 	virtualClip   image.Rectangle
 }
 
-func createQuadTree(opts *MapOptions, markers []Marker) *quadtree.QuadTree {
+func createQuadTree(opts *MapOptions, markers []Marker,  performRatioAdjustment bool) *quadtree.QuadTree {
 	var virtualPixelsPerServer float64
+	var ratioAdjustmentX float64 = 1.0
+    var ratioAdjustmentY float64 = 1.0
 	if config.ServersX >= config.ServersY {
 		virtualPixelsPerServer = float64(opts.virtualPixels / config.ServersX)
+		ratioAdjustmentY = float64(config.ServersX) / float64(config.ServersY)
 	} else {
 		virtualPixelsPerServer = float64(opts.virtualPixels / config.ServersY)
+		ratioAdjustmentX = float64(config.ServersY) / float64(config.ServersX)
 	}
 	virtualWaterRadius := virtualPixelsPerServer * config.WaterRadiusUE / config.GridSize
 
@@ -301,6 +305,12 @@ func createQuadTree(opts *MapOptions, markers []Marker) *quadtree.QuadTree {
 		vServerOffsetY := float64(marker.serverY) * virtualPixelsPerServer
 		vX := (float64(marker.relX) * virtualPixelsPerServer) + vServerOffsetX
 		vY := (float64(marker.relY) * virtualPixelsPerServer) + vServerOffsetY
+
+		if performRatioAdjustment == true {
+			vY = vY * ratioAdjustmentY;
+			vX = vX * ratioAdjustmentX;
+		}
+		
 		v := VirtualBounds{
 			x:      vX,
 			y:      vY,
@@ -575,7 +585,7 @@ func generateTiles(tilePath string, zoomLevel uint, markers []Marker, wg *sync.W
 	opts.actualPixels = config.TileSize
 	opts.virtualPixels = config.TileSize * (1 << (config.MaxZoom - 1))
 
-	qt := createQuadTree(&opts, markers)
+	qt := createQuadTree(&opts, markers, false)
 
 	tiles := 1 << zoomLevel
 	virtualPixelsPerTile := opts.virtualPixels / tiles
@@ -611,7 +621,7 @@ func generateGame(gamePath string, markers []Marker) {
 	opts.actualPixels = CorrectedGameSize
 	opts.virtualPixels = CorrectedGameSize * servers
 
-	qt := createQuadTree(&opts, markers)
+	qt := createQuadTree(&opts, markers, true)
 
 	// generate world map
 	opts.virtualClip = image.Rect(0, 0, opts.virtualPixels-1, opts.virtualPixels-1)
