@@ -1,5 +1,5 @@
 # (Experimental) Atlas Territory Map
-Used as an exmaple for Atlas to read from Redis and generate territory map data and host it out for end clients. Also it can optionally also generate the same data for a multi-level zoom maps (Example of this coming soon).
+Used as an example for Atlas to read from Redis and generate territory map data and host it out for end clients. Also it can optionally also generate the same data for a multi-level zoom maps (Example of this coming soon).
 
 ## Go Dependencies:
 * go get github.com/go-redis/redis
