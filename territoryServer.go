@@ -431,61 +431,43 @@ type claimCircle struct {
 	id       int64
 }
 
-func generateCompressedFile(opts *MapOptions, quadTree *quadtree.QuadTree) {
+func generateCompressedFile(opts *MapOptions, markers []Marker) {
 	// Setup
-	var virtualPixelsPerServer float64
-	if config.ServersX >= config.ServersY {
-		virtualPixelsPerServer = float64(opts.virtualPixels / config.ServersX)
-	} else {
-		virtualPixelsPerServer = float64(opts.virtualPixels / config.ServersY)
-	}
-	//	virtualLandRadius := virtualPixelsPerServer * config.LandRadiusUE / config.GridSize
-	virtualWaterRadius := virtualPixelsPerServer * config.WaterRadiusUE / config.GridSize
-	virtualToActual := float64(opts.actualPixels) / float64(opts.virtualClip.Max.X-opts.virtualClip.Min.X+1)
+	const BitsPerPixel uint16 = 32
+	ChannelBlocksPerDimension := uint16(math.Floor(math.Sqrt(float64(BitsPerPixel))))
+	CorrectedGameSize := int(config.GameSize) * int(ChannelBlocksPerDimension)
+
+	var virtualPixelsPerServerX = float64(CorrectedGameSize / config.ServersX)
+	var virtualPixelsPerServerY = float64(CorrectedGameSize / config.ServersY)
 
 	//TODO: Cleanup and remote the whole per server option on this one
-	SrcPixels := uint16(opts.actualPixels)
+	SrcPixels := uint16(CorrectedGameSize)
 	IDMap := make(map[uint64]FlagOwnerOutputHeader)
 
 	//Draw territories
-	qtBB := quadtree.BoundingBox{
-		MinX: float64(opts.virtualClip.Min.X),
-		MaxX: float64(opts.virtualClip.Max.X),
-		MinY: float64(opts.virtualClip.Min.Y),
-		MaxY: float64(opts.virtualClip.Max.Y),
-	}
-	for _, iVB := range quadTree.Query(qtBB) {
-		vb := iVB.(VirtualBounds)
-
-		// marker adjusted for clip zone
-		tX := vb.x - float64(opts.virtualClip.Min.X)
-		tY := vb.y - float64(opts.virtualClip.Min.Y)
-
-		// filter points outside of clip + gutter
-		if tX < -virtualWaterRadius || tY < -virtualWaterRadius || tX >= float64(opts.virtualClip.Max.X)+virtualWaterRadius || tY >= float64(opts.virtualClip.Max.Y)+virtualWaterRadius {
-			continue
-		}
-
-		// marker in image coordinates
-		iX := tX * virtualToActual
-		iY := tY * virtualToActual
+	for _, marker := range markers {
+		// marker adjusted to world space
+		vServerOffsetX := float64(marker.serverX) * virtualPixelsPerServerX
+		vServerOffsetY := float64(marker.serverY) * virtualPixelsPerServerY
+		iX := (float64(marker.relX) * virtualPixelsPerServerX) + vServerOffsetX
+		iY := (float64(marker.relY) * virtualPixelsPerServerY) + vServerOffsetY
 
 		// render marker
-		Entry, ok := IDMap[vb.marker.tribeOrOwnerID]
+		Entry, ok := IDMap[marker.tribeOrOwnerID]
 		if !ok {
 			Entry = FlagOwnerOutputHeader{
-				TribeOrPlayerID: vb.marker.tribeOrOwnerID,
+				TribeOrPlayerID: marker.tribeOrOwnerID,
 			}
 		}
 
-		switch vb.marker.markerType {
+		switch marker.markerType {
 		case 0:
 			Entry.LandClaims = append(Entry.LandClaims, ClaimFlagOutputEntry{X: uint16(iX), Y: uint16(iY)})
 		case 1:
 			Entry.WaterClaims = append(Entry.WaterClaims, ClaimFlagOutputEntry{X: uint16(iX), Y: uint16(iY)})
 		}
 
-		IDMap[vb.marker.tribeOrOwnerID] = Entry
+		IDMap[marker.tribeOrOwnerID] = Entry
 	}
 
 	// save the a tmp file
@@ -594,29 +576,12 @@ func generateTiles(tilePath string, zoomLevel uint, markers []Marker, wg *sync.W
 }
 
 func generateGame(gamePath string, markers []Marker) {
-	var servers int
-	if config.ServersX >= config.ServersY {
-		servers = config.ServersX
-	} else {
-		servers = config.ServersY
-	}
-
 	// common image options
 	opts := MapOptions{}
-
-	const BitsPerPixel uint16 = 32
-	ChannelBlocksPerDimension := uint16(math.Floor(math.Sqrt(float64(BitsPerPixel))))
-	CorrectedGameSize := int(config.GameSize) * int(ChannelBlocksPerDimension)
-
-	opts.actualPixels = CorrectedGameSize
-	opts.virtualPixels = CorrectedGameSize * servers
-
-	qt := createQuadTree(&opts, markers)
+	opts.filename = path.Join(gamePath, "world.map")
 
 	// generate world map
-	opts.virtualClip = image.Rect(0, 0, opts.virtualPixels-1, opts.virtualPixels-1)
-	opts.filename = path.Join(gamePath, "world.map")
-	generateCompressedFile(&opts, qt)
+	generateCompressedFile(&opts, markers)
 }
 
 func fetchClaimMarkers(client *redis.Client) ([]Marker, uint32) {
