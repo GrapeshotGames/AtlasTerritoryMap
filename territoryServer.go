@@ -796,7 +796,7 @@ func main() {
 
 	http.Handle("/", &fileHandlerWithCacheControl{fileServer: http.FileServer(http.Dir(config.WWWDir))})
 
-	endpoint := fmt.Sprintf(":%d" /*config.Host,*/, config.Port)
+	endpoint := fmt.Sprintf(":%d", config.Host, config.Port)
 	log.Println("Listening on ", endpoint)
 	log.Fatal(http.ListenAndServe(endpoint, nil))
 }
