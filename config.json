@@ -1,6 +1,7 @@
 {
     "EnableTileGeneration": false,
     "EnableGameGeneration": true,
+    "EnableTopTribes": true,
     "Host": "",
     "Port": 8881,
     "AlternativeURL": "",

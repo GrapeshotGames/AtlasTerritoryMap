@@ -31,6 +31,11 @@ import (
 	"github.com/llgcode/draw2d/draw2dimg"
 )
 
+const (
+	MarkerLand  uint8 = 0
+	MarkerWater uint8 = 1
+)
+
 // Marker represents a territory flag roughly as stored in redis
 type Marker struct {
 	serverX        int // from redis key which is serverId
@@ -102,6 +107,7 @@ type RedisConfiguration struct {
 type Configuration struct {
 	EnableTileGeneration bool                 // Turn on/off generation for web page
 	EnableGameGeneration bool                 // Turn on/off generation for game
+	EnableTopTribes      bool                 // Turn on/off generation of top 10 tribe generation
 	Host                 string               // Host adapter for http listen
 	Port                 uint16               // Port for http listen
 	AlternativeURL       string               // Alternative URL (e.g. S3) for game and web viewer
@@ -192,6 +198,7 @@ func loadConfig(path string) (cfg Configuration, err error) {
 	cfg = Configuration{
 		EnableTileGeneration: false,
 		EnableGameGeneration: true,
+		EnableTopTribes:      false,
 		Host:                 "",
 		Port:                 8881,
 		AlternativeURL:       "",
@@ -390,9 +397,9 @@ func generateImage(opts *MapOptions, quadTree *quadtree.QuadTree) {
 		// radius in image coordinates
 		iRadius := 1.0
 		switch vb.marker.markerType {
-		case 0:
+		case MarkerLand:
 			iRadius = virtualLandRadius * virtualToActual
-		case 1:
+		case MarkerWater:
 			iRadius = virtualWaterRadius * virtualToActual
 		}
 		if iRadius < 1 {
@@ -461,9 +468,9 @@ func generateCompressedFile(opts *MapOptions, markers []Marker) {
 		}
 
 		switch marker.markerType {
-		case 0:
+		case MarkerLand:
 			Entry.LandClaims = append(Entry.LandClaims, ClaimFlagOutputEntry{X: uint16(iX), Y: uint16(iY)})
-		case 1:
+		case MarkerWater:
 			Entry.WaterClaims = append(Entry.WaterClaims, ClaimFlagOutputEntry{X: uint16(iX), Y: uint16(iY)})
 		}
 
@@ -584,9 +591,10 @@ func generateGame(gamePath string, markers []Marker) {
 	generateCompressedFile(&opts, markers)
 }
 
-func fetchClaimMarkers(client *redis.Client) ([]Marker, uint32) {
+func fetchClaimMarkers(client *redis.Client, includeCounts bool) ([]Marker, uint32, map[uint64]*TribeCount) {
 	var crcs []uint32
 	var markers []Marker
+	countsPerTribe := make(map[uint64]*TribeCount)
 
 	for x := 0; x < config.ServersX; x++ {
 		for y := 0; y < config.ServersY; y++ {
@@ -604,6 +612,7 @@ func fetchClaimMarkers(client *redis.Client) ([]Marker, uint32) {
 				tid := binary.LittleEndian.Uint64(bytes[0:8])
 				tx := binary.LittleEndian.Uint16(bytes[8:10])
 				ty := binary.LittleEndian.Uint16(bytes[10:12])
+				markerType := bytes[12]
 
 				m := Marker{}
 				m.serverX = x
@@ -611,21 +620,34 @@ func fetchClaimMarkers(client *redis.Client) ([]Marker, uint32) {
 				m.tribeOrOwnerID = tid
 				m.relX = float64(tx) / float64(math.MaxUint16)
 				m.relY = float64(ty) / float64(math.MaxUint16)
-				m.markerType = bytes[12]
+				m.markerType = markerType
 
 				markers = append(markers, m)
+
+				if includeCounts && markerType == MarkerLand && isTribeID(tid) {
+					tribeCount := countsPerTribe[tid]
+					if tribeCount != nil {
+						tribeCount.count++
+					} else {
+						tribeCount = &TribeCount{
+							tribeID: tid,
+							count:   1,
+						}
+						countsPerTribe[tid] = tribeCount
+					}
+				}
 			}
 		}
 	}
 
-	// generate CRC32  for markers for rough "have they changed" check
+	// generate CRC32 for markers for rough "have they changed" check
 	sort.Slice(crcs, func(i, j int) bool { return crcs[i] < crcs[j] })
 	hash := crc32.NewIEEE()
 	for _, crc := range crcs {
 		binary.Write(hash, binary.LittleEndian, crc)
 	}
 
-	return markers, hash.Sum32()
+	return markers, hash.Sum32(), countsPerTribe
 }
 
 func updateUrlsInRedis(client *redis.Client) {
@@ -658,7 +680,7 @@ func tileBackgroundWorker(client *redis.Client) {
 
 	for {
 		log.Println("Getting markers for tiles")
-		markers, crc := fetchClaimMarkers(client)
+		markers, crc, _ := fetchClaimMarkers(client, false)
 		if crc != previousCrc {
 			previousCrc = crc
 
@@ -678,18 +700,74 @@ func tileBackgroundWorker(client *redis.Client) {
 	}
 }
 
+func stringSliceEq(a, b []string) bool {
+	if (a == nil) != (b == nil) {
+		return false
+	}
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func gameBackgroundWorker(client *redis.Client, notifyClient *redis.Client) {
 	gamePath := path.Join(config.WWWDir, "gameTiles")
 	previousCrc := uint32(1)
+	var previousTopTribes []string
 
 	updateUrlsInRedis(client)
 	notifyUrlsChanged(notifyClient)
 
 	for {
 		log.Println("Getting markers for game image")
-		markers, crc := fetchClaimMarkers(client)
+		markers, crc, counts := fetchClaimMarkers(client, config.EnableTopTribes)
 		if crc != previousCrc {
 			previousCrc = crc
+
+			if config.EnableTopTribes {
+				log.Println("Generating top N tribes")
+				top := TopNTribes(10, counts)
+
+				var gameTribeOutput []string
+				for i := range top {
+					tribeID := strconv.FormatUint(top[i], 10)
+					tribe, err := client.HMGet("tribedata:"+tribeID, "TribeName").Result()
+					if err != nil {
+						log.Println(err)
+					}
+					tribeName, ok := tribe[0].(string)
+					if !ok {
+						tribeName = "<abandoned>"
+					}
+					game := GameTribeOutput{
+						TribeID:   top[i],
+						TribeName: tribeName,
+						Index:     i,
+					}
+					js, _ := json.Marshal(game)
+					gameTribeOutput = append(gameTribeOutput, string(js))
+				}
+
+				if !stringSliceEq(previousTopTribes, gameTribeOutput) {
+					_, err := client.Del("toptribes").Result()
+					if err != nil {
+						log.Println(err)
+					}
+					if len(gameTribeOutput) > 0 {
+						_, err = client.RPush("toptribes", gameTribeOutput).Result()
+						if err != nil {
+							log.Println(err)
+						}
+					}
+					client.Publish("GeneralNotifications:GlobalCommands", "ReloadTopTribes")
+					previousTopTribes = gameTribeOutput
+				}
+			}
 
 			log.Println("Generating game images")
 			generateGame(gamePath, markers)
