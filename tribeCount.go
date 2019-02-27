@@ -1,6 +1,9 @@
 package main
 
-import "container/heap"
+import (
+	"container/heap"
+	"sort"
+)
 
 // GameTribeOutput is the JSON structure for the toptribes list
 type GameTribeOutput struct {
@@ -40,29 +43,27 @@ func (h *TribeCountHeap) Pop() interface{} {
 
 func TopNTribes(n int, counts map[uint64]*TribeCount) []uint64 {
 	pq := make(TribeCountHeap, 0)
-	i := 0
+
 	for _, v := range counts {
 		// prime heap with n-items
-		if i < n {
-			pq = append(pq, v)
-			i++
-			continue
-		} else if i == n {
-			heap.Init(&pq)
-		}
+		pq = append(pq, v)
+	}
 
-		// add n+1 items and fix up heap
-		heap.Push(&pq, v)
-		if pq.Len() > n {
-			heap.Pop(&pq)
+	heap.Init(&pq)
+
+	sort.SliceStable(pq, func(i, j int) bool {
+		if pq[i].count < pq[j].count {
+			return false
+		} else if pq[i].count == pq[j].count {
+			return pq[i].tribeID > pq[j].tribeID
+		} else {
+			return true
 		}
-		i++
-	}
-	if i <= n {
-		heap.Init(&pq)
-	}
+	})
+
 	results := make([]uint64, 0)
-	for i := Min(n, len(pq)) - 1; i >= 0; i-- {
+	totalCount := len(pq)
+	for i := 0; i < Min(n, totalCount); i++ {
 		results = append(results, pq[i].tribeID)
 	}
 	return results
